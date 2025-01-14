@@ -1,134 +1,126 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, FrontmatterLinkCache, FuzzySuggestModal, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface ObsidianUtilitiesSettings {
+	commandProperties: string[];
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: ObsidianUtilitiesSettings = {
+	commandProperties: [],
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class NavigateToPropertyLink extends Plugin {
+	settings: ObsidianUtilitiesSettings;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
+			id: 'navigate-property-link',
+			name: 'Navigate to property link',
+			checkCallback: (checking) => this.navigateToPropertyLink(checking),
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
+		this.addSettingTab(new SampleSettingTab(this));
 	}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.addPropertyCommands(this.settings.commandProperties);
 	}
 
-	async saveSettings() {
+	async updatePropertyCommands(properties: string[]) {
+		const currentProperties = this.settings.commandProperties;
+		const removedProperties = currentProperties.filter((property) => !properties.includes(property));
+		const addedProperties = properties.filter((property) => !currentProperties.includes(property));
+
+		removedProperties.forEach((property) => this.removeCommand(`navigate-to-${property}`));
+		this.addPropertyCommands(addedProperties);
+
+		this.settings.commandProperties = properties;
 		await this.saveData(this.settings);
+	}
+
+	addPropertyCommands(properties: string[]) {
+		new Set(properties).forEach((property) => this.addCommand({
+			id: `navigate-to-${property}`,
+			name: `Navigate to ${property}`,
+			checkCallback: (checking) => this.navigateToPropertyLink(checking, property),
+		}));
+	}
+
+	navigateToPropertyLink(checking: boolean, key?: string) {
+		const activeFile = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
+		if (!activeFile) {
+			if (!checking) new Notice('No active file');
+			return false;
+		}
+
+		const frontmatterLinks = this.app.metadataCache.getFileCache(activeFile)?.frontmatterLinks;
+		const links = key ? frontmatterLinks?.filter((link) => linkMatch(key, link.key)) : frontmatterLinks;
+
+		const available = links && links.length > 0;
+		if (checking) {
+			return !!available;
+		}
+
+		if (available) {
+			new LinkSelectionModal(this.app, activeFile.path, links, !key).open();
+		} else if (key) {
+			new Notice(`No "${key}" link found`);
+		} else {
+			new Notice('No links found');
+		}
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
+class LinkSelectionModal extends FuzzySuggestModal<FrontmatterLinkCache> {
+	constructor(app: App, private sourcePath: string, private links: Array<FrontmatterLinkCache>, private showKey: boolean) {
 		super(app);
 	}
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
+	getItems(): FrontmatterLinkCache[] {
+		return this.links;
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	getItemText(item: FrontmatterLinkCache): string {
+		const text = item.displayText ?? item.link;
+		if (!this.showKey) return text;
+		return `${text} (${item.key})`;
+	}
+
+	onChooseItem(item: FrontmatterLinkCache, evt: MouseEvent | KeyboardEvent): void {
+		this.app.workspace.openLinkText(item.link, this.sourcePath)
 	}
 }
 
 class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
+	constructor(private plugin: NavigateToPropertyLink) {
+		super(plugin.app, plugin);
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+			.setName('Properties')
+			.setDesc('Create a command for each property in the list. Each property should be entered on its own line.')
+			.addTextArea((text) => {
+				text
+					.setPlaceholder(['up', 'down', 'next', 'prev'].join('\n'))
+					.setValue(this.plugin.settings.commandProperties.join('\n'))
+					.onChange(async (value) => {
+						const list = value.split('\n').filter((item) => item.length > 0);
+						await this.plugin.updatePropertyCommands(list);
+					})
+				text.inputEl.rows = 8;
+			});
 	}
+}
+
+function linkMatch(key: string, link: string) {
+	if (link === key) return true;
+	const i = link.lastIndexOf('.')
+	return i > -1 && link.slice(0, i) === key && /^\d+$/.test(link.slice(i + 1));
 }
