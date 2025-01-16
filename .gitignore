@@ -8,6 +8,15 @@
 # npm
 node_modules
 
+# yarn
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+# !.yarn/sdks
+!.yarn/versions
+
 # Don't include the compiled main.js file in the repo.
 # They should be uploaded to GitHub releases instead.
 main.js

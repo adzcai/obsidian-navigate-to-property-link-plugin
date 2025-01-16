@@ -1,11 +1,39 @@
-import { App, FrontmatterLinkCache, FuzzySuggestModal, MarkdownView, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import * as chrono from 'chrono-node'
+import { moment, App, FrontmatterLinkCache, FuzzySuggestModal, Notice, Plugin, PluginSettingTab, Setting, TFile, SuggestModal } from 'obsidian';
+
+enum Periodicity {
+	DAY = 'day',
+	WEEK = 'week',
+	MONTH = 'month',
+	QUARTER = 'quarter',
+	YEAR = 'year',
+}
+
+const placeholders: { [key in Periodicity]: string } = {
+	day: 'YYYY-MM-DD',
+	week: 'gggg [W]ww',
+	month: 'YYYY-MM MMMM',
+	quarter: 'YYYY [Q]Q',
+	year: 'YYYY',
+}
 
 interface ObsidianUtilitiesSettings {
 	commandProperties: string[];
+	templatePaths: {
+		[key in Periodicity]: string | null;
+	};
 }
 
 const DEFAULT_SETTINGS: ObsidianUtilitiesSettings = {
 	commandProperties: [],
+
+	templatePaths: {
+		day: null,
+		week: null,
+		month: null,
+		quarter: null,
+		year: null,
+	}
 }
 
 export default class NavigateToPropertyLink extends Plugin {
@@ -15,12 +43,18 @@ export default class NavigateToPropertyLink extends Plugin {
 		await this.loadSettings();
 
 		this.addCommand({
-			id: 'navigate-property-link',
-			name: 'Navigate to property link',
-			checkCallback: (checking) => this.navigateToPropertyLink(checking),
+			id: 'open-a-property-link',
+			name: 'Open a property link',
+			editorCallback: (editor, ctx) => ctx.file && this.openPropertyLink(ctx.file),
 		});
 
-		this.addSettingTab(new SampleSettingTab(this));
+		this.addCommand({
+			id: 'open-a-date-note',
+			name: 'Open a date note',
+			callback: () => new PeriodicPicker(this).open()
+		});
+
+		this.addSettingTab(new PeriodicPickerSettingsTab(this));
 	}
 
 	async loadSettings() {
@@ -40,31 +74,26 @@ export default class NavigateToPropertyLink extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	async updateTemplate(key: Periodicity, value: string | null) {
+		this.settings.templatePaths[key] = value;
+		await this.saveData(this.settings);
+	}
+
 	addPropertyCommands(properties: string[]) {
 		new Set(properties).forEach((property) => this.addCommand({
-			id: `navigate-to-${property}`,
-			name: `Navigate to ${property}`,
-			checkCallback: (checking) => this.navigateToPropertyLink(checking, property),
+			id: `open-property-${property}`,
+			name: `Open ${property}`,
+			editorCallback: (editor, ctx) => ctx.file && this.openPropertyLink(ctx.file, property),
 		}));
 	}
 
-	navigateToPropertyLink(checking: boolean, key?: string) {
-		const activeFile = this.app.workspace.getActiveViewOfType(MarkdownView)?.file;
-		if (!activeFile) {
-			if (!checking) new Notice('No active file');
-			return false;
-		}
-
-		const frontmatterLinks = this.app.metadataCache.getFileCache(activeFile)?.frontmatterLinks;
+	openPropertyLink(file: TFile, key?: string) {
+		const frontmatterLinks = this.app.metadataCache.getFileCache(file)?.frontmatterLinks;
 		const links = key ? frontmatterLinks?.filter((link) => linkMatch(key, link.key)) : frontmatterLinks;
-
 		const available = links && links.length > 0;
-		if (checking) {
-			return !!available;
-		}
 
 		if (available) {
-			new LinkSelectionModal(this.app, activeFile.path, links, !key).open();
+			new LinkSelectionModal(this.app, file.path, links, !key).open();
 		} else if (key) {
 			new Notice(`No "${key}" link found`);
 		} else {
@@ -93,8 +122,48 @@ class LinkSelectionModal extends FuzzySuggestModal<FrontmatterLinkCache> {
 	}
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	constructor(private plugin: NavigateToPropertyLink) {
+class PeriodicPicker extends SuggestModal<string> {
+	private initialDate: Date | undefined;
+
+	constructor(private readonly plugin: NavigateToPropertyLink) {
+		super(plugin.app);
+
+		const path = this.app.workspace.getActiveFile()?.path;
+		if (path) {
+			this.initialDate = Object.values(Periodicity)
+				.map((p) => this.getTemplate(p) ? moment(path, this.getTemplate(p) + '[.md]', true) : null)
+				.find(p => p?.isValid())
+				?.toDate();
+		}
+	}
+
+	getTemplate(p: Periodicity) {
+		return this.plugin.settings.templatePaths[p];
+	}
+
+	getSuggestions(query: string): string[] {
+		const date = chrono.parseDate(query, this.initialDate);
+		if (!date) return [];
+		return Object.values(Periodicity).map((p) => this.getPeriodic(date, p)!).filter((p) => p)
+	}
+
+	getPeriodic(date: moment.MomentInput, p: Periodicity): string | null {
+		const template = this.getTemplate(p);
+		if (!template) return null;
+		return moment(date).format(template);
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.setText(value);
+	}
+
+	onChooseSuggestion(item: string, evt: MouseEvent | KeyboardEvent): void {
+		this.plugin.app.workspace.openLinkText(item, '');
+	}
+}
+
+class PeriodicPickerSettingsTab extends PluginSettingTab {
+	constructor(private readonly plugin: NavigateToPropertyLink) {
 		super(plugin.app, plugin);
 	}
 
@@ -116,6 +185,23 @@ class SampleSettingTab extends PluginSettingTab {
 					})
 				text.inputEl.rows = 8;
 			});
+
+		Object.values(Periodicity).forEach((p) => {
+			const setting = new Setting(containerEl);
+			setting
+				.setName(`${capitalize(p)} note path`)
+				.setDesc(`Path to ${p} note: `)
+				.addMomentFormat((fmt) => {
+					fmt
+						.setPlaceholder(placeholders[p])
+						.setSampleEl(setting.descEl.createEl('strong'))
+						.onChange(async (value) => {
+							await this.plugin.updateTemplate(p, value);
+						});
+					const initial = this.plugin.settings.templatePaths[p];
+					if (initial) fmt.setValue(initial)
+				})
+		});
 	}
 }
 
@@ -123,4 +209,8 @@ function linkMatch(key: string, link: string) {
 	if (link === key) return true;
 	const i = link.lastIndexOf('.')
 	return i > -1 && link.slice(0, i) === key && /^\d+$/.test(link.slice(i + 1));
+}
+
+function capitalize(s: string) {
+	return s.charAt(0).toUpperCase() + s.slice(1);
 }
