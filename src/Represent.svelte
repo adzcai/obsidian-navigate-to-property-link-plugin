@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { flatEntries } from "utils";
-	import Self from "./Represent.svelte";
+	import { flatEntries } from "src/utils";
+	import Self from "src/Represent.svelte";
 
 	let { item }: { item: unknown } = $props();
 </script>

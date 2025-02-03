@@ -23,7 +23,7 @@ const context = await esbuild.context({
 			preprocess: sveltePreprocess(),
 		})
 	],
-	entryPoints: ["main.ts"],
+	entryPoints: ["src/main.ts"],
 	bundle: true,
 	external: [
 		"obsidian",

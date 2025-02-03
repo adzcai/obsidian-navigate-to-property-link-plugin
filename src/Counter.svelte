@@ -1,6 +1,6 @@
 <script lang="ts">
-	import Represent from "Represent.svelte";
-	import { columnKey, type Props } from "utils";
+	import Represent from "src/Represent.svelte";
+	import { columnKey, type Props } from "src/utils";
 	let { rows, columns }: Props = $props();
 </script>
 

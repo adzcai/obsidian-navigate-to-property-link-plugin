@@ -31,3 +31,22 @@ export function flatEntries(obj: object): Array<[string, unknown]> {
             : [[key, value]],
     );
 }
+
+export const LINK_START = '"[[' as const;
+export const LINK_END = ']]"' as const;
+export const LINK_KEY = '__LINK__' as const;export function linkMatch(key: string, link: string) {
+	if (link === key) return true;
+	const i = link.lastIndexOf('.');
+	return i > -1 && link.slice(0, i) === key && /^\d+$/.test(link.slice(i + 1));
+}
+export function capitalize(s: string) {
+	return s.charAt(0).toUpperCase() + s.slice(1);
+}
+export enum Periodicity {
+	DAY = 'day',
+	WEEK = 'week',
+	MONTH = 'month',
+	QUARTER = 'quarter',
+	YEAR = 'year'
+}
+
