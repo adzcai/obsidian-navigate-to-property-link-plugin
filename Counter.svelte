@@ -1,29 +1,6 @@
-<script module>
-	import type { TFile } from "obsidian";
-	import Represent from "Represent.svelte";
-
-	export interface Row extends TFile {
-		[key: string]: unknown;
-	}
-
-	export type Column =
-		| string
-		| {
-				key: string;
-				title: string;
-		  };
-
-	export interface Props {
-		rows: Array<Row>;
-		columns: Array<Column>;
-	}
-
-	export function columnKey(column: Column) {
-		return typeof column === "string" ? column : column.key;
-	}
-</script>
-
 <script lang="ts">
+	import Represent from "Represent.svelte";
+	import { columnKey, type Props } from "utils";
 	let { rows, columns }: Props = $props();
 </script>
 

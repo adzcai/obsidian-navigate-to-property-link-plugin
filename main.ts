@@ -1,8 +1,8 @@
 import * as chrono from 'chrono-node'
-import Counter, { columnKey, type Column, type Props, type Row } from 'Counter.svelte';
-import { moment, App, type FrontmatterLinkCache, FuzzySuggestModal, Notice, Plugin, PluginSettingTab, Setting, TFile, SuggestModal, MarkdownRenderChild, parseYaml, type LinkCache, type Reference, resolveSubpath, type CachedMetadata, MarkdownRenderer } from 'obsidian';
-import { flatEntries } from 'Represent.svelte';
+import Counter from 'Counter.svelte';
+import { moment, App, type FrontmatterLinkCache, FuzzySuggestModal, Notice, Plugin, PluginSettingTab, Setting, TFile, SuggestModal, MarkdownRenderChild, parseYaml, type Reference, resolveSubpath, type CachedMetadata, MetadataCache } from 'obsidian';
 import { mount, unmount } from 'svelte';
+import { type Props, type Column, columnKey, type Row, flatEntries } from 'utils';
 
 enum Periodicity {
 	DAY = 'day',
@@ -52,10 +52,63 @@ type Query =
 		}
 	};
 
-export default class NavigateToPropertyLink extends Plugin {
-	settings: ObsidianUtilitiesSettings;
+class PropertyCache {
 	reverseCache = new Map<string, Map<string, unknown>>();
 	activeKeys = new Map<string, Set<string>>();
+
+	constructor(private metadataCache: MetadataCache) { }
+
+	public resetFileCache(file: TFile) {
+		const activeKeys = this.activeKeys.get(file.path);
+		if (activeKeys) {
+			activeKeys.forEach((property) => this.reverseCache.get(property)?.delete(file.path));
+			activeKeys.clear();
+		}
+	}
+
+	public cacheFileMetadata(file: TFile) {
+		const metadata = this.metadataCache.getFileCache(file);
+
+		if (typeof metadata?.frontmatter === 'object') {
+			flatEntries(metadata.frontmatter).forEach(([key, value]) => {
+				this.cacheProperty(key, file.path, value);
+			})
+		}
+
+		metadata?.links?.forEach((link) => this.cacheLink(link, file));
+		metadata?.frontmatterLinks?.forEach((link) => {
+			this.cacheLink(link, file);
+			this.cacheProperty(`${LINK_KEY}.${link.key}`, file.path, link);
+		});
+	}
+
+	private cacheLink(link: Reference, source: TFile) {
+		const target = this.metadataCache.getFirstLinkpathDest(link.link, source.path);
+		if (target) this.cacheProperty(LINK_KEY, target.path, source, true);
+	}
+
+	private cacheProperty(property: string, path: string, value: unknown, multiple = false) {
+		const keyCache = this.reverseCache.get(property);
+		if (keyCache) {
+			keyCache.set(path, multiple ? [...keyCache.get(path) as Array<unknown> ?? [], value] : value)
+		} else {
+			this.reverseCache.set(property, new Map([[path, multiple ? [value] : value]]))
+		}
+
+		const activeKeys = this.activeKeys.get(path);
+		if (activeKeys) activeKeys.add(property);
+		else this.activeKeys.set(path, new Set([property]));
+	}
+
+	public clear() {
+		this.reverseCache.clear();
+		this.activeKeys.clear();
+	}
+}
+
+export default class NavigateToPropertyLink extends Plugin {
+	settings: ObsidianUtilitiesSettings;
+	propertyCache = new PropertyCache(this.app.metadataCache);
 
 	async onload() {
 		await this.loadSettings();
@@ -89,16 +142,15 @@ export default class NavigateToPropertyLink extends Plugin {
 
 			this.registerEvent(this.app.metadataCache.on('changed', (file, data, cache) => {
 				if (file instanceof TFile) {
-					this.resetCache(file);
-					this.cacheFile(file)
+					this.propertyCache.resetFileCache(file);
+					this.propertyCache.cacheFileMetadata(file);
 				}
 			}))
 		})
 	}
 
 	onunload(): void {
-		this.reverseCache.clear();
-		this.activeKeys.clear();
+		this.propertyCache.clear();
 	}
 
 	/**
@@ -107,51 +159,11 @@ export default class NavigateToPropertyLink extends Plugin {
 	private initializeStore() {
 		const start = Date.now();
 
-		this.app.vault.getMarkdownFiles().forEach(file => this.cacheFile(file));
+		this.app.vault.getMarkdownFiles().forEach(file => this.propertyCache.cacheFileMetadata(file));
 
 		new Notice(`Done in ${Date.now() - start} ms`, 1000);
 	}
 
-	private resetCache(file: TFile) {
-		const activeKeys = this.activeKeys.get(file.path);
-		if (activeKeys) {
-			activeKeys.forEach((property) => this.reverseCache.get(property)?.delete(file.path));
-			activeKeys.clear();
-		}
-	}
-
-	private cacheFile(file: TFile) {
-		const metadata = this.app.metadataCache.getFileCache(file);
-		if (typeof metadata?.frontmatter === 'object') {
-			flatEntries(metadata.frontmatter).forEach(([key, value]) => {
-				this.cacheProperty(key, file.path, value);
-			})
-		}
-
-		metadata?.links?.forEach((link) => this.cacheLink(link, file));
-		metadata?.frontmatterLinks?.forEach((link) => {
-			this.cacheLink(link, file);
-			this.cacheProperty(`${LINK_KEY}.${link.key}`, file.path, link);
-		});
-	}
-
-	private cacheLink(link: Reference, source: TFile) {
-		const target = this.app.metadataCache.getFirstLinkpathDest(link.link, source.path);
-		if (target) this.cacheProperty(LINK_KEY, target.path, source, true);
-	}
-
-	private cacheProperty(property: string, path: string, value: unknown, multiple = false) {
-		const keyCache = this.reverseCache.get(property);
-		if (keyCache) {
-			keyCache.set(path, multiple ? [...keyCache.get(path) as Array<unknown> ?? [], value] : value)
-		} else {
-			this.reverseCache.set(property, new Map([[path, multiple ? [value] : value]]))
-		}
-
-		const activeKeys = this.activeKeys.get(path);
-		if (activeKeys) activeKeys.add(property);
-		else this.activeKeys.set(path, new Set([property]));
-	}
 
 	private async parseQuery(yaml: string, sourcePath: string): Promise<Props> {
 		const body = parseYaml(yaml);
@@ -165,7 +177,7 @@ export default class NavigateToPropertyLink extends Plugin {
 				const value = await this.getRowValue(file, data, key)
 				return [key, value] as const;
 			}));
-			return Object.fromEntries([...entries, ['path', file.path]]);
+			return Object.fromEntries([...entries, ['path', file.path]]) as Row;
 		}));
 
 		return {
@@ -194,7 +206,7 @@ export default class NavigateToPropertyLink extends Plugin {
 				const target = query.linksto.replace(/^\[\[|\]\]$/g, '');
 				const destFile = this.app.metadataCache.getFirstLinkpathDest(target, sourcePath);
 				if (!destFile) return [];
-				const backlinks = this.reverseCache.get(LINK_KEY)?.get(destFile.path) as Array<TFile> | undefined;
+				const backlinks = this.propertyCache.reverseCache.get(LINK_KEY)?.get(destFile.path) as Array<TFile> | undefined;
 				return backlinks ?? [];
 			}
 		}

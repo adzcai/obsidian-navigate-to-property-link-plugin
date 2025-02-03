@@ -1,18 +1,5 @@
-<script module>
-	export function flatEntries(obj: object): Array<[string, unknown]> {
-		if (obj === null) return [];
-		return Object.entries(obj).flatMap(([key, value]) =>
-			typeof value === "object"
-				? flatEntries(value).map(([k, value]): [string, unknown] => [
-						`${key}.${k}`,
-						value,
-					])
-				: [[key, value]],
-		);
-	}
-</script>
-
 <script lang="ts">
+	import { flatEntries } from "utils";
 	import Self from "./Represent.svelte";
 
 	let { item }: { item: unknown } = $props();
