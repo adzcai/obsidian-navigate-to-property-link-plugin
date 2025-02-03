@@ -1,3 +1,6 @@
+import { RangeSetBuilder } from '@codemirror/state';
+import { Decoration, ViewPlugin, ViewUpdate, type DecorationSet, type EditorView, type PluginValue } from '@codemirror/view';
+import { syntaxTree } from '@codemirror/language';
 import * as chrono from 'chrono-node'
 import Counter from 'Counter.svelte';
 import { moment, App, type FrontmatterLinkCache, FuzzySuggestModal, Notice, Plugin, PluginSettingTab, Setting, TFile, SuggestModal, MarkdownRenderChild, parseYaml, type Reference, resolveSubpath, type CachedMetadata, MetadataCache } from 'obsidian';
@@ -146,6 +149,30 @@ export default class NavigateToPropertyLink extends Plugin {
 					this.propertyCache.cacheFileMetadata(file);
 				}
 			}))
+		})
+
+		this.registerEditorExtension(emojiPlugin);
+
+		this.addCommand({
+			id: 'follow-internal-link',
+			name: 'Follow frontmatter link under cursor',
+			editorCheckCallback: (checking, editor, ctx) => {
+				const cursor = editor.getCursor();
+				const line = editor.getLine(cursor.line);
+				const matches = line.matchAll(/\[\[([^\]]+)\]\]/g);
+				const match = Array.from(matches).find((match) => {
+					const start = match.index;
+					const end = start + match[0].length;
+					return cursor.ch >= start && cursor.ch < end;
+				})
+				if (checking) {
+					return !!match;
+				}
+				if (match) {
+					const [, target] = match;
+					this.app.workspace.openLinkText(target, ctx.file?.path ?? '')
+				}
+			},
 		})
 	}
 
@@ -395,3 +422,56 @@ function linkMatch(key: string, link: string) {
 function capitalize(s: string) {
 	return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+class EmojiListPlugin implements PluginValue {
+	decorations: DecorationSet;
+
+	constructor(view: EditorView) {
+		this.decorations = this.buildDecorations(view);
+	}
+
+	update(update: ViewUpdate): void {
+		if (update.docChanged || update.viewportChanged) {
+			this.decorations = this.buildDecorations(update.view);
+		}
+	}
+
+	destroy(): void { }
+
+	buildDecorations(view: EditorView): DecorationSet {
+		const builder = new RangeSetBuilder<Decoration>();
+		const tree = syntaxTree(view.state)
+		const { from, to } = view.visibleRanges.reduce(({ from, to }, { from: from_, to: to_ }) => ({ from: Math.min(from, from_), to: Math.max(to, to_) }))
+		tree.iterate({
+			from,
+			to,
+			enter(node) {
+				if (node.name !== 'hmd-frontmatter_string') return
+
+				const text = view.state.sliceDoc(node.from, node.to)
+				const link = /^"\[\[([^\]]+)\]\]"$/.exec(text)
+				if (!link) return
+				builder.add(node.from, node.from + '"[['.length, Decoration.mark({
+					class: 'cm-formatting-link cm-formatting-link_formatting-link-start',
+					tagName: 'span',
+				}))
+				builder.add(node.from + '"[['.length, node.to - ']]"'.length, Decoration.mark({
+					class: 'cm-hmd-internal-link',
+					tagName: 'span',
+				}))
+				builder.add(node.to - ']]"'.length, node.to, Decoration.mark({
+					class: 'cm-formatting-link cm-formatting-link_formatting-link-end',
+					tagName: 'span',
+				}))
+			},
+		})
+
+		return builder.finish();
+	}
+}
+
+const pluginSpec = {
+	decorations: (value: EmojiListPlugin) => value.decorations,
+}
+
+const emojiPlugin = ViewPlugin.fromClass(EmojiListPlugin, pluginSpec)
