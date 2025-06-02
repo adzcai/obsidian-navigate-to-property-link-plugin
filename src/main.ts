@@ -137,8 +137,8 @@ export default class NavigateToPropertyLink extends Plugin {
 				const dest = editor.getRange(
 					editor.offsetToPos(from - LINK_START.length),
 					editor.offsetToPos(to + LINK_END.length)
-				);
-				if (!dest.startsWith(LINK_START) || !dest.endsWith(LINK_END))
+				); // to check for link start and end
+				if (!/^["']\[\[/.test(dest) || !/\]\]["']$/.test(dest))
 					return false;
 				if (checking) return true;
 				const linktext = dest

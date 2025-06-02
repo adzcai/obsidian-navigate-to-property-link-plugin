@@ -42,7 +42,7 @@ class FrontmatterLinkPlugin implements PluginValue {
 				if (node.name !== "hmd-frontmatter_string") return;
 
 				const text = view.state.sliceDoc(node.from, node.to);
-				const link = /^"\[\[([^\]]+)\]\]"$/.exec(text);
+				const link = /^["']\[\[([^\]]+)\]\]["']$/.exec(text);
 				if (!link) return;
 				builder.add(
 					node.from,
