@@ -51,13 +51,13 @@ const DEFAULT_SETTINGS: ObsidianUtilitiesSettings = {
 type Query =
 	| { and: Array<Query> }
 	| {
-			linksto:
-				| string
-				| {
-						property: string;
-						name: string;
-				  };
-	  };
+		linksto:
+		| string
+		| {
+			property: string;
+			name: string;
+		};
+	};
 
 export default class NavigateToPropertyLink extends Plugin {
 	settings: ObsidianUtilitiesSettings;

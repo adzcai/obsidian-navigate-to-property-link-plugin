@@ -4,17 +4,17 @@ import { SuggestModal, moment } from 'obsidian';
 import type NavigateToPropertyLink from './main';
 
 export class PeriodicPicker extends SuggestModal<string> {
-	private initialDate: Date | undefined;
+	private initialDate: Date;
 
 	constructor(private readonly plugin: NavigateToPropertyLink) {
 		super(plugin.app);
 
 		const path = this.app.workspace.getActiveFile()?.path;
 		if (path) {
-			this.initialDate = Object.values(Periodicity)
+			const dateFromFilename = Object.values(Periodicity)
 				.map((p) => this.getTemplate(p) ? moment(path, this.getTemplate(p) + '[.md]', true) : null)
-				.find(p => p?.isValid())
-				?.toDate();
+				.find(p => p?.isValid());
+			this.initialDate = dateFromFilename ? dateFromFilename.toDate() : new Date();
 		}
 	}
 
