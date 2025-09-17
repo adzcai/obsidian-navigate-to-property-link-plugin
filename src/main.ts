@@ -79,23 +79,15 @@ export default class NavigateToPropertyLink extends Plugin {
 			callback: () => new PeriodicPicker(this).open(),
 		});
 
-		this.addSettingTab(new SettingTab(this));
+		this.addCommand({
+			id: "open-zotero",
+			name: "Open this file in Zotero",
+			editorCallback(editor, ctx) {
+				open(`zotero://select/items/@${ctx.file!.basename}`);
+			},
+		});
 
-		this.registerMarkdownCodeBlockProcessor(
-			"tabular",
-			async (source, el, ctx) => {
-				try {
-					const { rows, columns } = await this.parseQuery(
-						source,
-						ctx.sourcePath
-					);
-					ctx.addChild(new TableComponent(rows, columns, el));
-				} catch (e) {
-					console.error(e);
-					el.setText(e);
-				}
-			}
-		);
+		this.addSettingTab(new SettingTab(this));
 
 		this.app.workspace.onLayoutReady(() => {
 			this.initializeStore();
@@ -325,31 +317,5 @@ class LinkSelectionModal extends FuzzySuggestModal<FrontmatterLinkCache> {
 		evt: MouseEvent | KeyboardEvent
 	): void {
 		this.app.workspace.openLinkText(item.link, this.sourcePath);
-	}
-}
-
-class TableComponent extends MarkdownRenderChild {
-	counter: ReturnType<typeof Counter>;
-
-	constructor(
-		private rows: Array<Row>,
-		private columns: Array<Column>,
-		containerEl: HTMLElement
-	) {
-		super(containerEl);
-	}
-
-	onload(): void {
-		this.counter = mount(Counter, {
-			target: this.containerEl,
-			props: {
-				rows: this.rows,
-				columns: this.columns,
-			},
-		});
-	}
-
-	onunload(): void {
-		unmount(this.counter).catch(console.error);
 	}
 }
